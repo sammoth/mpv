@@ -83,6 +83,17 @@ static bool moltenvk_reconfig(struct ra_ctx *ctx)
 
 static int moltenvk_control(struct ra_ctx *ctx, int *events, int request, void *arg)
 {
+    if (request == VOCTRL_CHECK_EVENTS) {
+        struct priv *p = ctx->priv;
+        CGSize s = p->layer.drawableSize;
+        int w = s.width;
+        int h = s.height;
+        if (w != ctx->vo->dwidth || h != ctx->vo->dheight) {
+            ctx->vo->dwidth = w;
+            ctx->vo->dheight = h;
+            *events |= VO_EVENT_RESIZE;
+        }
+    }
     return VO_NOTIMPL;
 }
 
