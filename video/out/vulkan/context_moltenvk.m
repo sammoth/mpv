@@ -28,11 +28,45 @@ struct priv {
     CAMetalLayer *layer;
 };
 
+static bool get_layer_size(CAMetalLayer *layer, int *w, int *h)
+{
+    if (!layer || !layer.superlayer)
+        return false;
+
+    CGSize s = layer.drawableSize;
+    int dw = (int)s.width;
+    int dh = (int)s.height;
+
+    // Match mpv's MetalLayer workaround: MoltenVK can transiently force
+    // drawableSize to 1x1 while presenting, which causes visible flicker.
+    if (dw > 1 && dh > 1) {
+        *w = dw;
+        *h = dh;
+        return true;
+    }
+
+    CGSize bounds = layer.bounds.size;
+    CGFloat scale = layer.contentsScale;
+    int bw = (int)(bounds.width * scale);
+    int bh = (int)(bounds.height * scale);
+    if (bw > 1 && bh > 1) {
+        *w = bw;
+        *h = bh;
+        return true;
+    }
+
+    return false;
+}
+
 static void moltenvk_uninit(struct ra_ctx *ctx)
 {
     struct priv *p = ctx->priv;
     ra_vk_ctx_uninit(ctx);
     mpvk_uninit(&p->vk);
+    if (p->layer) {
+        CFRelease((__bridge CFTypeRef)p->layer);
+        p->layer = nil;
+    }
 }
 
 static bool moltenvk_init(struct ra_ctx *ctx)
@@ -50,6 +84,7 @@ static bool moltenvk_init(struct ra_ctx *ctx)
         goto fail;
 
     p->layer = (__bridge CAMetalLayer *)(intptr_t)ctx->vo->opts->WinID;
+    CFRetain((__bridge CFTypeRef)p->layer);
     VkMetalSurfaceCreateInfoEXT info = {
          .sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
          .pLayer = p->layer,
@@ -76,8 +111,10 @@ fail:
 static bool moltenvk_reconfig(struct ra_ctx *ctx)
 {
     struct priv *p = ctx->priv;
-    CGSize s = p->layer.drawableSize;
-    ra_vk_ctx_resize(ctx, s.width, s.height);
+    int w = 0;
+    int h = 0;
+    if (get_layer_size(p->layer, &w, &h))
+        ra_vk_ctx_resize(ctx, w, h);
     return true;
 }
 
@@ -85,9 +122,10 @@ static int moltenvk_control(struct ra_ctx *ctx, int *events, int request, void *
 {
     if (request == VOCTRL_CHECK_EVENTS) {
         struct priv *p = ctx->priv;
-        CGSize s = p->layer.drawableSize;
-        int w = s.width;
-        int h = s.height;
+        int w = 0;
+        int h = 0;
+        if (!get_layer_size(p->layer, &w, &h))
+            return VO_NOTIMPL;
         if (w != ctx->vo->dwidth || h != ctx->vo->dheight) {
             ctx->vo->dwidth = w;
             ctx->vo->dheight = h;
